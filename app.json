@@ -1,24 +1,203 @@
-{
-  "name": "TelegramChat",
-  "description": "Bot anonymous chat.",
-  "repository": "https://github.com/Dax083/anon-bot",
-  "logo": "https://telegra.ph/file/de3e9d2a021c2ac516b12.jpg",
-  "env": {
-    "TOKEN": {
-      "description": "Dapatkan di @botfather",
-      "value": ""
-    },
-    "OWNER": {
-      "description": "Isi dengan username kalian tanpa tanda @",
-      "value": "kang_culiknew"
-    },
-    "GROUP": {
-      "description": "Isi dengan username group kalian tanpa tanda @ kalau gak punya gak usah isi",
-      "value": "vvslh_pro"
-    },
-    "CHANNEL": {
-      "description": "Isi dengan username channel kalian tanpa tanda @ kalau gak punya gak usah isi",
-      "value": "vvslh_pro"
-    }
-  }
-}
+from telegram import Update, ParseMode, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
+import logging
+
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# States for the conversation handler
+GENDER, AGE, LOCATION = range(3)
+
+# Dictionary to keep track of active users and their chat partners
+active_users = {}
+waiting_users = []
+user_data = {}
+
+# ID grup Telegram yang harus diikuti oleh pengguna
+REQUIRED_GROUP_ID = -1001853173482  # Ganti dengan ID grup Anda
+
+# URL ke channel grup dan pemilik bot
+GROUP_URL = 'https://t.me/cari_pacar_jodoh_teman'  # Ganti dengan URL grup Anda
+CHANNEL_URL = 'https://t.me/ofcbotxaiko'  # Ganti dengan URL channel Anda
+OWNER_URL = 'https://t.me/skoyi19'   # Ganti dengan URL pemilik bot
+
+# ID pemilik bot
+OWNER_ID = 6474577612  # Ganti dengan ID Telegram pemilik bot
+
+# Function to check if user is a member of the required group
+def is_user_in_group(update: Update, context: CallbackContext) -> bool:
+    user_id = update.message.chat_id
+    member_status = context.bot.get_chat_member(REQUIRED_GROUP_ID, user_id).status
+    return member_status in ['member', 'administrator', 'creator']
+
+# Function to create inline keyboard
+def get_inline_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton("Join Group", url=GROUP_URL)],
+        [InlineKeyboardButton("Join Channel", url=CHANNEL_URL)],
+        [InlineKeyboardButton("Pemilik", url=OWNER_URL)]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# Function to start the bot
+def start(update: Update, context: CallbackContext) -> None:
+    if is_user_in_group(update, context):
+        user = update.effective_user
+        welcome_message = (
+            f"Halo, {user.first_name}!\n"
+            "Ini adalah bot anonim. Kirim pesan apapun, dan saya akan membalas secara anonim.\n\n"
+            "Ketik /help untuk melihat perintah yang tersedia."
+        )
+        update.message.reply_text(welcome_message, reply_markup=get_inline_keyboard())
+    else:
+        update.message.reply_text(
+            "Anda harus bergabung dengan grup ini terlebih dahulu sebelum menggunakan bot:\n"
+            f"https://t.me/joinchat/{REQUIRED_GROUP_ID}",
+            reply_markup=get_inline_keyboard()
+        )
+
+# Function to provide help information, only accessible by the owner
+def help_command(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    if user_id == OWNER_ID:
+        help_message = (
+            "Berikut adalah perintah yang tersedia:\n"
+            "/start - Mulai percakapan dengan bot\n"
+            "/next - Cari pasangan percakapan baru\n"
+            "/stop - Menghentikan percakapan saat ini\n"
+            "/settings - Ubah pengaturan profil Anda (jenis kelamin, umur, lokasi)\n\n"
+            "Tombol:\n"
+            "Contact Owner - Hubungi pemilik bot\n\n"
+            "Cukup kirim pesan apapun, dan saya akan membalas secara anonim."
+        )
+        update.message.reply_text(help_message, parse_mode=ParseMode.MARKDOWN, reply_markup=get_inline_keyboard())
+    else:
+        update.message.reply_text("Anda tidak memiliki izin untuk menggunakan perintah ini.")
+
+# Function to handle the /settings command
+def settings(update: Update, context: CallbackContext) -> None:
+    if is_user_in_group(update, context):
+        reply_keyboard = [['Pria', 'Wanita']]
+        update.message.reply_text(
+            'Silakan pilih jenis kelamin Anda:',
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+        )
+        return GENDER
+    else:
+        update.message.reply_text(
+            "Anda harus bergabung dengan grup ini terlebih dahulu sebelum menggunakan bot:\n"
+            f"https://t.me/joinchat/{REQUIRED_GROUP_ID}",
+            reply_markup=get_inline_keyboard()
+        )
+
+# Function to handle gender input
+def set_gender(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    user_data[user_id] = {'gender': update.message.text}
+    update.message.reply_text('Berapa umur Anda?')
+    return AGE
+
+# Function to handle age input
+def set_age(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    user_data[user_id]['age'] = update.message.text
+    update.message.reply_text('Di mana lokasi Anda saat ini?')
+    return LOCATION
+
+# Function to handle location input
+def set_location(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.chat_id
+    user_data[user_id]['location'] = update.message.text
+    update.message.reply_text('Pengaturan Anda telah diperbarui. Terima kasih!')
+    return ConversationHandler.END
+
+# Function to handle messages
+def handle_message(update: Update, context: CallbackContext) -> None:
+    if is_user_in_group(update, context):
+        user_id = update.message.chat_id
+        if user_id in active_users:
+            partner_id = active_users[user_id]
+            context.bot.send_message(chat_id=partner_id, text=f"Anonim berkata: {update.message.text}")
+        else:
+            update.message.reply_text("Anda belum memiliki pasangan. Ketik /next untuk mencari pasangan baru.")
+    else:
+        update.message.reply_text(
+            "Anda harus bergabung dengan grup ini terlebih dahulu sebelum menggunakan bot:\n"
+            f"https://t.me/joinchat/{REQUIRED_GROUP_ID}",
+            reply_markup=get_inline_keyboard()
+        )
+
+# Function to handle the /next command
+def next_command(update: Update, context: CallbackContext) -> None:
+    if is_user_in_group(update, context):
+        user_id = update.message.chat_id
+        if user_id in active_users:
+            partner_id = active_users.pop(user_id)
+            active_users.pop(partner_id, None)
+            context.bot.send_message(chat_id=partner_id, text="Pasangan Anda telah meninggalkan percakapan. Ketik /next untuk mencari pasangan baru.")
+        
+        if waiting_users:
+            partner_id = waiting_users.pop(0)
+            active_users[user_id] = partner_id
+            active_users[partner_id] = user_id
+            context.bot.send_message(chat_id=partner_id, text="Anda telah terhubung dengan pasangan baru. Mulailah percakapan!")
+            update.message.reply_text("Anda telah terhubung dengan pasangan baru. Mulailah percakapan!")
+        else:
+            waiting_users.append(user_id)
+            update.message.reply_text("Menunggu pasangan. Harap tunggu...")
+    else:
+        update.message.reply_text(
+            "Anda harus bergabung dengan grup ini terlebih dahulu sebelum menggunakan bot:\n"
+            f"https://t.me/joinchat/{REQUIRED_GROUP_ID}",
+            reply_markup=get_inline_keyboard()
+        )
+
+# Function to handle the /stop command
+def stop_command(update: Update, context: CallbackContext) -> None:
+    if is_user_in_group(update, context):
+        user_id = update.message.chat_id
+        if user_id in active_users:
+            partner_id = active_users.pop(user_id)
+            active_users.pop(partner_id, None)
+            context.bot.send_message(chat_id=partner_id, text="Pasangan Anda telah menghentikan percakapan. Ketik /next untuk mencari pasangan baru.")
+            update.message.reply_text("Anda telah menghentikan percakapan. Ketik /next untuk mencari pasangan baru.")
+        else:
+            update.message.reply_text("Anda tidak sedang dalam percakapan. Ketik /next untuk mencari pasangan baru.")
+    else:
+        update.message.reply_text(
+            "Anda harus bergabung dengan grup ini terlebih dahulu sebelum menggunakan bot:\n"
+            f"https://t.me/joinchat/{REQUIRED_GROUP_ID}",
+            reply_markup=get_inline_keyboard()
+        )
+
+# Error handler function
+def error(update: Update, context: CallbackContext) -> None:
+    logger.warning(f'Update "{update}" caused error "{context.error}"')
+
+def main() -> None:
+    # Insert your token here
+    TOKEN = '5916727319:AAGBj8x6AU50Y0cx0ThmOnDlm0XzTkgIkxQ'
+
+    # Create the Updater and pass it your bot's token.
+    updater = Updater(TOKEN)
+
+    # Get the dispatcher to register handlers
+    dispatcher = updater.dispatcher
+
+    # Register command handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("next", next_command))
+    dispatcher.add_handler(CommandHandler("stop", stop_command))
+
+    # Add a conversation handler for settings
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('settings', settings)],
+        states={
+            GENDER: [MessageHandler(Filters.text & ~Filters.command, set_gender)],
+            AGE: [MessageHandler(Filters.text & ~Filters.command, set_age)],
+            LOCATION: [MessageHandler(Filters.text & ~Filters
